@@ -81,7 +81,7 @@ namespace Confirmator
 							Thread.Sleep( 1000 );
 						}
 					}
-					Console.WriteLine( "Done." );
+					Console.WriteLine( "done." );
 				}
 				Console.Write( "Fetching confirmations... " );
 				Confirmation[] confs = null;
@@ -120,7 +120,7 @@ namespace Confirmator
 				} else {
 					errorsCount++;
 				}
-				Console.WriteLine( result ? "succes!" : "failed!" );				
+				Console.WriteLine( result ? "success!" : "failed!" );				
 			}
 		}
 	}
