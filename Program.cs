@@ -39,7 +39,7 @@ namespace Confirmator
 			bool acceptTrades = false;
 			bool acceptMarket = false;
 			bool acceptAll = false;
-			uint delay = 30;
+			uint delay = 0;
 			foreach (var arg in args) {
 				if ( arg.Equals( "-market" ) ) {
 					acceptMarket = true;
@@ -62,17 +62,14 @@ namespace Confirmator
 				steamAccount.Session.SteamID.ToString(),
 				acceptAll ?" all":((acceptMarket?" market":"") + (acceptTrades ? " trades" : ""))
 				);
+			Console.WriteLine( "Refreshing session... " );
+			steamAccount.RefreshSession();
 			Console.Title = String.Format( "Confirmator [{0}]", steamAccount.Session.SteamID.ToString() );
 			long fetchsCount = 0;
 			long acceptsCount = 0;
 			long errorsCount = 0;
-			while ( true ) {
-				if (errorsCount > 10) {
-					Console.Write( "Refreshing session... " );
-					steamAccount.RefreshSession();
-					errorsCount = 0;
-				}
-				if ( fetchsCount > 0 && delay > 0 ) {
+			while ( true ) {			
+				if ( delay > 0 ) {
 					Console.Write( "Waiting... ", intervalFormat(delay) );					
 					using ( var progress = new ProgressBar() ) {
 						for ( uint i = 0; i < delay; i++ ) {
