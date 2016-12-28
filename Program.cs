@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,16 @@ namespace Confirmator
 {
 	class Program
 	{
+
+		static readonly uint ACCEPT_CHUNK_MAX = 10;
+		static readonly uint ACCEPT_DELAY_S = 15;
+		static readonly uint IDLE_DELAY_S = 60;
+
+		static readonly byte ACCEPT_NONE = 0;
+		static readonly byte ACCEPT_TRADES = 1;
+		static readonly byte ACCEPT_MARKET = 1<<1;
+		static readonly byte ACCEPT_OTHERS = 1<<2;
+
 		private static string intervalFormat( ulong intervalInSeconds ) {
 			TimeSpan interval = TimeSpan.FromSeconds( intervalInSeconds );
 			if ( interval.Minutes == 0 && interval.Hours == 0 && interval.Days == 0 ) {
@@ -25,8 +36,14 @@ namespace Confirmator
 			}
 		}
 
-		static void Main( string[] args ) {			
-			Console.Title = "Confirmator";
+		static void Main( string[] args ) {
+			string version = System.Reflection.Assembly.GetExecutingAssembly()
+										   .GetName()
+										   .Version
+										   .ToString();
+
+			Console.Title = "Confirmator " + version;
+
 			if (args.Length < 1) {
 				Console.Error.WriteLine( "No file name was given!" );
 				return;
@@ -36,88 +53,105 @@ namespace Confirmator
 				Console.Error.WriteLine("File not found!");
 				return;
 			}
-			bool acceptTrades = false;
-			bool acceptMarket = false;
-			bool acceptAll = false;
-			uint delay = 0;
+			byte acceptTargets = ACCEPT_NONE;
+
+			uint delay = IDLE_DELAY_S;
+
 			foreach (var arg in args) {
 				if ( arg.Equals( "-market" ) ) {
-					acceptMarket = true;
+					acceptTargets |= ACCEPT_MARKET;
 				}
 				if ( arg.Equals( "-trade" ) ) {
-					acceptTrades = true;
+					acceptTargets |= ACCEPT_TRADES;
 				}
-				if ( arg.Equals( "-all" ) ) {
-					acceptAll = true;
+				if ( arg.Equals( "-other" ) ) {
+					acceptTargets |= ACCEPT_OTHERS;
 				}
 				uint.TryParse(arg, out delay);
 			}
-			if (!(acceptMarket || acceptTrades)) {
-				Console.Error.WriteLine( "No -market or -trade args!" );
-				return;
+			if (acceptTargets == ACCEPT_NONE) {
+				Console.Error.WriteLine( "No target args given! Press any key to continue with accepting all confirmations." );
+				Console.ReadKey();
+				acceptTargets |= ACCEPT_MARKET;
+				acceptTargets |= ACCEPT_TRADES;
+				acceptTargets |= ACCEPT_OTHERS;
 			}
 			string contents = File.ReadAllText(maFile);
 			SteamGuardAccount steamAccount = JsonConvert.DeserializeObject<SteamGuardAccount>(contents);			
 			Console.WriteLine( "Starting account '{0}'. Accepting:{1}.",
 				steamAccount.Session.SteamID.ToString(),
-				acceptAll ?" all":((acceptMarket?" market":"") + (acceptTrades ? " trades" : ""))
-				);
+				(((acceptTargets & ACCEPT_MARKET) > ACCEPT_NONE) ? " market" : "") +
+				(((acceptTargets & ACCEPT_TRADES) > ACCEPT_NONE) ? " trades" : "") +
+				(((acceptTargets & ACCEPT_OTHERS) > ACCEPT_NONE) ? " others" : "")
+			);
 			Console.WriteLine( "Refreshing session... " );
 			steamAccount.RefreshSession();
-			Console.Title = String.Format( "Confirmator [{0}]", steamAccount.Session.SteamID.ToString() );
-			long fetchsCount = 0;
-			long acceptsCount = 0;
-			long errorsCount = 0;
+			Console.Title = String.Format( "Confirmator {0} [{1}]", version, steamAccount.Session.SteamID.ToString() );
+			List<Confirmation> nextToAccept = new List<Confirmation>();
+			uint nextDelay = 0;		
+			
 			while ( true ) {			
-				if ( delay > 0 ) {
-					Console.Write( "Waiting... ", intervalFormat(delay) );					
+				if ( nextDelay > 0) {
+					Console.Write( "Please wait... ", intervalFormat( nextDelay ) );					
 					using ( var progress = new ProgressBar() ) {
-						for ( uint i = 0; i < delay; i++ ) {
-							progress.Report( (double)i / (double)delay );
-							progress.setCustomLabel( intervalFormat( delay - i ) );
+						for ( uint i = 0; i < nextDelay; i++ ) {
+							progress.Report( (double)i / (double)nextDelay );
+							progress.setCustomLabel( intervalFormat( nextDelay - i ) );
 							Thread.Sleep( 1000 );
 						}
 					}
 					Console.WriteLine( "done." );
 				}
-				Console.Write( "Fetching confirmations... " );
+				nextDelay = delay;
+
 				Confirmation[] confs = null;
-				try {
-					confs = steamAccount.FetchConfirmations();
-					fetchsCount++;
-				} catch (Exception e) {
-					errorsCount++;
-					Console.WriteLine( "failed!" );
-					Console.Error.WriteLine( e.Message );
-					Console.Error.WriteLine( e.StackTrace );
-				}
-				if (confs == null || confs.Length == 0) {
-					Console.WriteLine( "Nothing to confirm." );
-					continue;
-				}
-				Console.WriteLine( "got {0} confirmation{1}", confs.Length, confs.Length > 1?"s":"" );
-				List<Confirmation> acceptConfs = new List<Confirmation>();
-				foreach ( var conf in confs ) {
-					if ( (conf.ConfType == Confirmation.ConfirmationType.MarketSellTransaction && acceptMarket)
-						|| (conf.ConfType == Confirmation.ConfirmationType.Trade && acceptTrades)
-						|| acceptAll ) {
-						acceptConfs.Add( conf );
-						Console.WriteLine( "    {0}: {1}", conf.ID, conf.Description );
+				if ( nextToAccept.Count == 0 ) {
+					Console.Write( "Fetching confirmations... " );					
+					try {
+						confs = steamAccount.FetchConfirmations();
+					} catch ( Exception e ) {
+						if ( e is SteamAuth.SteamGuardAccount.WGTokenExpiredException || e is SteamAuth.SteamGuardAccount.WGTokenInvalidException ) {
+							Console.WriteLine( "failed!" );
+							Console.Error.WriteLine( e.Message );
+							Console.Error.WriteLine( e.StackTrace );
+							Console.WriteLine( "Refreshing session... " );
+							steamAccount.RefreshSession();
+							nextDelay = Math.Min( ACCEPT_DELAY_S, delay );
+							continue;
+						}
+						throw;
 					}
-					if ( acceptConfs.Count >= 10 ) break;					
+					if ( confs == null || confs.Length == 0 ) {
+						Console.WriteLine( "Nothing to confirm." );
+						continue;
+					}
+					Console.WriteLine( "got {0} confirmation{1}", confs.Length, confs.Length > 1 ? "s" : "" );
+				} else {
+					confs = nextToAccept.ToArray<Confirmation>();
+					nextToAccept.Clear();
 				}
-				if ( acceptConfs.Count == 0 ) {
+				List<Confirmation> confirmationsChunk = new List<Confirmation>();
+				foreach ( var conf in confs ) {
+					if ( confirmationsChunk.Count >= ACCEPT_CHUNK_MAX ) {
+						nextToAccept.Add( conf );
+					} else if (	(conf.ConfType == Confirmation.ConfirmationType.MarketSellTransaction && (acceptTargets & ACCEPT_MARKET) > ACCEPT_NONE) ||
+						(conf.ConfType == Confirmation.ConfirmationType.Trade && (acceptTargets & ACCEPT_TRADES) > ACCEPT_NONE) ||
+						(conf.ConfType == Confirmation.ConfirmationType.Unknown && (acceptTargets & ACCEPT_OTHERS) > ACCEPT_NONE) 
+					) {
+						confirmationsChunk.Add( conf );
+						Console.WriteLine( "\t{0}: {1}", conf.ID, conf.Description );
+					}			
+				}
+				if ( confirmationsChunk.Count == 0 ) {
 					Console.WriteLine( "nothing to confirm." );
 					continue;
 				}
-				Console.Write( "Accepting {0} confirmation{1}... ", acceptConfs.Count, acceptConfs.Count > 1?"s":"");
-				bool result = steamAccount.AcceptMultipleConfirmations( acceptConfs.ToArray() );
-				if (result) {
-					acceptsCount += acceptConfs.Count;
-				} else {
-					errorsCount++;
-				}
+				Console.Write( "Accepting {0} out of {1} confirmation{2}... ", confirmationsChunk.Count, confs.Length, confs.Length > 1?"s":"");
+				bool result = steamAccount.AcceptMultipleConfirmations( confirmationsChunk.ToArray() );
 				Console.WriteLine( result ? "success!" : "failed!" );				
+				if (nextToAccept.Count > 0) {
+					nextDelay = Math.Min( ACCEPT_DELAY_S, delay );
+				}
 			}
 		}
 	}
