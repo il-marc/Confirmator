@@ -77,7 +77,7 @@ namespace Confirmator
 				acceptTargets |= ACCEPT_OTHERS;
 			}
 			string contents = File.ReadAllText(maFile);
-			SteamGuardAccount steamAccount = JsonConvert.DeserializeObject<SteamGuardAccount>(contents);			
+			SteamGuardAccount steamAccount = JsonConvert.DeserializeObject<SteamGuardAccount>(contents);						
 			Console.WriteLine( "Starting account '{0}'. Accepting:{1}.",
 				steamAccount.Session.SteamID.ToString(),
 				(((acceptTargets & ACCEPT_MARKET) > ACCEPT_NONE) ? " market" : "") +
@@ -137,16 +137,24 @@ namespace Confirmator
 					} else if (	(conf.ConfType == Confirmation.ConfirmationType.MarketSellTransaction && (acceptTargets & ACCEPT_MARKET) > ACCEPT_NONE) ||
 						(conf.ConfType == Confirmation.ConfirmationType.Trade && (acceptTargets & ACCEPT_TRADES) > ACCEPT_NONE) ||
 						(conf.ConfType == Confirmation.ConfirmationType.Unknown && (acceptTargets & ACCEPT_OTHERS) > ACCEPT_NONE) 
-					) {
+					) {						
 						confirmationsChunk.Add( conf );
-						Console.WriteLine( "\t{0}: {1}", conf.ID, conf.Description );
+						Console.WriteLine( "\t{0}: {1} {2}", 
+							conf.ID, 
+							conf.Description, 
+							conf.ConfType == Confirmation.ConfirmationType.Trade ? 
+								" offerID:" + steamAccount.GetConfirmationTradeOfferID(conf).ToString() : ""
+						);
 					}			
 				}
 				if ( confirmationsChunk.Count == 0 ) {
 					Console.WriteLine( "nothing to confirm." );
 					continue;
 				}
-				Console.Write( "Accepting {0} out of {1} confirmation{2}... ", confirmationsChunk.Count, confs.Length, confs.Length > 1?"s":"");
+				Console.Write( "Accepting {0} out of {1} confirmation{2}... ", 
+					confirmationsChunk.Count, 
+					confs.Length, confs.Length > 1?"s":""
+				);
 				bool result = steamAccount.AcceptMultipleConfirmations( confirmationsChunk.ToArray() );
 				Console.WriteLine( result ? "success!" : "failed!" );				
 				if (nextToAccept.Count > 0) {
