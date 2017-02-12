@@ -45,12 +45,14 @@ namespace Confirmator
 			Console.Title = "Confirmator " + version;
 
 			if (args.Length < 1) {
-				Console.Error.WriteLine( "No file name was given!" );
+				Console.Error.WriteLine( "No file name was given! Press any key to continue..." );
+				Console.ReadKey();
 				return;
 			}
 			string maFile = args[0];
 			if ( !File.Exists( maFile ) ) {
-				Console.Error.WriteLine("File not found!");
+				Console.Error.WriteLine( "File not found! Press any key to continue..." );
+				Console.ReadKey();
 				return;
 			}
 			byte acceptTargets = ACCEPT_NONE;
